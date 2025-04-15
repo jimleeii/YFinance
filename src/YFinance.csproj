@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.1.0-preview.8" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+    <PackageReference Include="OoplesFinance.YahooFinanceAPI" Version="1.7.0" />
+    <PackageReference Include="pythonnet" Version="3.1.0-preview2024-03-03" />
+  </ItemGroup>
+</Project>
