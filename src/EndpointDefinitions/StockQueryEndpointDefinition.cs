@@ -1,6 +1,4 @@
 ﻿using OoplesFinance.YahooFinanceAPI.Models;
-using YFinance.Models;
-using YFinance.Services;
 
 namespace YFinance.EndpointDefinitions;
 

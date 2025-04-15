@@ -1,6 +1,5 @@
 ﻿using OoplesFinance.YahooFinanceAPI;
 using OoplesFinance.YahooFinanceAPI.Models;
-using YFinance.Models;
 
 namespace YFinance.Services;
 

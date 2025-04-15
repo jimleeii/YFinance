@@ -1,8 +1,7 @@
 using ModelContextProtocol.Server;
+using OoplesFinance.YahooFinanceAPI.Enums;
 using OoplesFinance.YahooFinanceAPI.Models;
 using System.ComponentModel;
-using YFinance.Models;
-using YFinance.Services;
 
 namespace YFinance.Tools;
 
@@ -23,6 +22,24 @@ public static class StockQueryTool
         IStockQueryService stockQueryService,
         [Description("The stock query parameter data.")] StockQueryParameterData message)
     {
+        IEnumerable<HistoricalChartInfo> data = await stockQueryService.QueryHistoricalDataAsync(message);
+        return data;
+    }
+
+    /// <summary>
+    /// Queries today's historical data and returns the results back to the client.
+    /// </summary>
+    /// <remarks>
+    /// <param name="stockQueryService">The stock query service used to fetch historical data.</param>
+    /// The <paramref name="message"/> StartDate is set to yesterday and the DataFrequency is set to Daily.
+    /// </remarks>
+    [McpServerTool, Description("Queries today's historical data and returns the results back to the client.")]
+    public static async Task<IEnumerable<HistoricalChartInfo>> QueryTodayAsync(
+        IStockQueryService stockQueryService,
+        [Description("The stock query parameter data.")] StockQueryParameterData message)
+    {
+        message.StartDate = DateTime.Today.AddDays(-1);
+        message.DataFrequency = DataFrequency.Daily;
         IEnumerable<HistoricalChartInfo> data = await stockQueryService.QueryHistoricalDataAsync(message);
         return data;
     }

@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using YFinance;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddConsole(consoleLogOptions =>
