@@ -1,5 +1,7 @@
+.github
 .qodo
 .roo
 .vs
+.vscode
 src/bin
 src/obj
