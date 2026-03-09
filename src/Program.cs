@@ -8,10 +8,12 @@ builder.Logging.AddConsole(consoleLogOptions =>
 });
 builder.Services.AddEndpointDefinitions(typeof(IEndpointDefinition));
 builder.Services.ConfigureHttpJsonOptions(static options => options.SerializerOptions.NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals);
+builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 app.UseEndpointDefinitions(builder.Environment);
 
-app.MapGet("/", () => "Hello YFinance!");
+app.MapHealthChecks("/health");
+app.MapGet("/info", () => "Hello YFinance!");
 
 await app.RunAsync();
