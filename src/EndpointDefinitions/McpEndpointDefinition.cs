@@ -22,6 +22,6 @@ public class McpEndpointDefinition : IEndpointDefinition
     /// <param name="services">The services collection to add the MCP server to.</param>
     public void DefineServices(IServiceCollection services)
     {
-        services.AddMcpServer().WithStdioServerTransport().WithToolsFromAssembly().WithPromptsFromAssembly();
+        services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly().WithPromptsFromAssembly();
     }
 }
