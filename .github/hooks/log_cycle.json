@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "python .github/agents/Orchestrator/scripts/log_hook_runner.py --phase pre --summary \"Pre-tool invocation\"",
+        "cwd": ".",
+        "timeout": 5
+      }
+    ]
+    ,"PostToolUse": [
+      {
+        "type": "command",
+        "command": "python .github/agents/Orchestrator/scripts/post_chat_hook.py --force-persist --tags \"copilot-chat\"",
+        "cwd": ".",
+        "timeout": 10
+      }
+    ]
+  }
+}
