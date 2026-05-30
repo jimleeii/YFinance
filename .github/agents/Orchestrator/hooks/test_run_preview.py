@@ -23,6 +23,13 @@ def main() -> None:
         event_flags={"failure_detected": True},
         summary="Preview full entry",
         skills=["alpha", "beta"],
+        metadata={
+            "curated_log": True,
+            "project_request": "Preview full entry",
+            "change_applied": "Render a curated full-log preview with concrete IDs.",
+            "observed_result": "Preview mode should omit unresolved placeholder fields.",
+            "decision": "keep",
+        },
         transcript="Sample transcript text for preview",
         preview=True,
     )

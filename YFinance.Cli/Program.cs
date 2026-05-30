@@ -4,6 +4,7 @@ using System.CommandLine.Parsing;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -110,6 +111,53 @@ namespace YFinance.Cli
             query.AddOption(serverOpt);
             query.AddOption(verboseOpt);
 
+            var fundamentals = new Command("fundamentals", "Query fundamentals payload with best/backup source fallbacks")
+            {
+                Description = "Query fundamentals data. Example:\n  yfinance fundamentals --symbol AAPL --server http://localhost:5005 --pretty"
+            };
+
+            var fundamentalsSymbolOpt = new Option<string>(new[] { "--symbol", "-s" }, "Stock symbol") { IsRequired = true };
+            var fundamentalsServerOpt = new Option<string>("--server", () => string.Empty, "Server URL to proxy requests to (optional)");
+            var fundamentalsOutputOpt = new Option<string>(new[] { "--output", "-o" }, () => string.Empty, "Output file path (defaults to stdout)");
+            var fundamentalsPrettyOpt = new Option<bool>("--pretty", "Pretty-print JSON output");
+            var fundamentalsVerboseOpt = new Option<bool>(new[] { "--verbose", "-v" }, "Verbose output");
+
+            fundamentalsSymbolOpt.AddValidator(result =>
+            {
+                var token = result.Tokens.Count > 0 ? result.Tokens[0].Value : null;
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    result.ErrorMessage = "--symbol is required.";
+                    return;
+                }
+                if (token.Length > 12)
+                {
+                    result.ErrorMessage = "Symbol too long (max 12 characters).";
+                    return;
+                }
+                if (!Regex.IsMatch(token, "^[A-Za-z0-9.-]+$"))
+                {
+                    result.ErrorMessage = "Symbol contains invalid characters. Use letters, numbers, dot, or hyphen.";
+                }
+            });
+
+            fundamentalsServerOpt.AddValidator(result =>
+            {
+                if (result.Tokens.Count == 0) return;
+                var token = result.Tokens[0].Value;
+                if (string.IsNullOrWhiteSpace(token)) return;
+                if (!Uri.TryCreate(token, UriKind.Absolute, out var u) || (u.Scheme != "http" && u.Scheme != "https"))
+                {
+                    result.ErrorMessage = "--server must be a valid http(s) URL.";
+                }
+            });
+
+            fundamentals.AddOption(fundamentalsSymbolOpt);
+            fundamentals.AddOption(fundamentalsServerOpt);
+            fundamentals.AddOption(fundamentalsOutputOpt);
+            fundamentals.AddOption(fundamentalsPrettyOpt);
+            fundamentals.AddOption(fundamentalsVerboseOpt);
+
                         // Examples subcommand for nicer formatted usage examples
                         var examplesCmd = new Command("examples", "Show usage examples and common patterns");
                         examplesCmd.SetHandler(() =>
@@ -118,6 +166,7 @@ namespace YFinance.Cli
     yfinance query --symbol AAPL --start 2026-05-01 --format csv --output aapl.csv
     yfinance query --symbol AAPL --server http://localhost:5005
     yfinance query -s MSFT -S 2026-01-01 -f weekly -F json
+    yfinance fundamentals --symbol AAPL --pretty
 
 Notes:
     - Omit --output to write to stdout.
@@ -224,6 +273,61 @@ Notes:
             }, symbolOpt, startOpt, freqOpt, formatOpt, outputOpt, serverOpt, verboseOpt);
 
             root.AddCommand(query);
+
+            fundamentals.SetHandler(async (string sym, string serverUrl, string outPath, bool pretty, bool verbose, CancellationToken ct) =>
+            {
+                if (verbose) Console.Error.WriteLine($"Fundamentals: {sym}, server={serverUrl}, pretty={pretty}");
+
+                IYFinanceSdk sdk;
+                HttpClient? http = null;
+                if (!string.IsNullOrWhiteSpace(serverUrl))
+                {
+                    var factory = host.Services.GetRequiredService<IHttpClientFactory>();
+                    http = factory.CreateClient("proxy");
+                    sdk = new HttpProxyClient(http, serverUrl);
+                }
+                else
+                {
+                    sdk = host.Services.GetRequiredService<IYFinanceSdk>();
+                }
+
+                try
+                {
+                    var payload = await sdk.QueryFundamentalsAsync(sym, ct);
+                    var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        WriteIndented = pretty
+                    });
+
+                    if (!string.IsNullOrWhiteSpace(outPath))
+                    {
+                        await File.WriteAllTextAsync(outPath, json, ct);
+                        if (verbose)
+                        {
+                            Console.Error.WriteLine($"Wrote output to {outPath}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine(json);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.Error.WriteLine("Operation cancelled.");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Error: {ex.Message}");
+                }
+                finally
+                {
+                    http?.Dispose();
+                }
+            }, fundamentalsSymbolOpt, fundamentalsServerOpt, fundamentalsOutputOpt, fundamentalsPrettyOpt, fundamentalsVerboseOpt);
+
+            root.AddCommand(fundamentals);
 
             var exit = await root.InvokeAsync(args);
 

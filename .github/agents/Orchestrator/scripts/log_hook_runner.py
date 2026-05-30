@@ -10,10 +10,14 @@ the markdown CLI directly.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 def _as_text_list(value: Any) -> List[str]:
@@ -151,7 +155,10 @@ def find_repo_root(start: Optional[Path] = None) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run orchestrator log hook runner.")
+    parser = argparse.ArgumentParser(
+        description="Run orchestrator log hook runner.",
+        fromfile_prefix_chars="@",
+    )
     parser.add_argument("--phase", choices=["pre", "mid", "post"], default="pre", help="Hook phase")
     parser.add_argument("--dispatch-path", default="direct", help="Dispatch path (direct/single-agent/multi-agent)")
     parser.add_argument("--summary", default="", help="Short summary message")
@@ -179,7 +186,7 @@ def main() -> int:
     sys.path.insert(0, str(orchestrator_root))
 
     try:
-        from hooks.log_hooks import log_cycle
+        from hooks.log_hooks import log_cycle, normalize_checkpoint_metadata
     except Exception as e:  # pragma: no cover - import/runtime guard
         print("Failed to import hooks.log_hooks:", e, file=sys.stderr)
         return 2
@@ -221,6 +228,26 @@ def main() -> int:
         metadata = _load_json_object(args.metadata, "--metadata")
         spawn_payload = _load_json_object(args.spawn_payload, "--spawn-payload")
         model_catalog = _load_json_object(args.model_catalog, "--model-catalog")
+        # If no catalog supplied, attempt to load a persisted discovery result
+        if not model_catalog:
+            try:
+                default_catalog = workspace_root / "skills" / "model_catalog.json"
+                if default_catalog.exists():
+                    model_catalog = json.loads(default_catalog.read_text(encoding="utf-8"))
+                    logger.debug("Loaded model_catalog from %s", default_catalog)
+                else:
+                    try:
+                        from src.model_discovery import load_model_catalog_bundle
+                    except Exception:
+                        from model_discovery import load_model_catalog_bundle  # type: ignore
+
+                    bundle = load_model_catalog_bundle(repo_root=workspace_root)
+                    model_catalog = bundle.catalog
+                    if not args.global_default_model and bundle.default_model:
+                        args.global_default_model = bundle.default_model
+            except Exception:
+                # best-effort only
+                model_catalog = {}
     except ValueError as e:  # pragma: no cover - user input parsing
         print(e, file=sys.stderr)
         return 6
@@ -236,6 +263,13 @@ def main() -> int:
 
     if model_resolution:
         metadata["model_resolution"] = model_resolution
+
+    metadata = normalize_checkpoint_metadata(
+        summary=args.summary,
+        metadata=metadata,
+        event_flags=event_flags,
+        prompt_command=args.prompt_command,
+    )
 
     try:
         res = log_cycle(

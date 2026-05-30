@@ -11,7 +11,7 @@
     ,"PostToolUse": [
       {
         "type": "command",
-        "command": "python .github/agents/Orchestrator/scripts/post_chat_hook.py --force-persist --tags \"copilot-chat\"",
+        "command": "python .github/agents/Orchestrator/scripts/post_chat_hook.py --tags \"copilot-chat\"",
         "cwd": ".",
         "timeout": 10
       }

@@ -11,6 +11,17 @@ agents: ["Software Architect", "Senior Developer", "Code Reviewer"]
 
 This file is an entry point that references the modular policy skills in `skills/*/SKILL.md`.
 
+### Normative language and interpretation
+
+Use the following terms consistently:
+
+- **MUST**: mandatory behavior; non-compliance is a policy violation.
+- **SHOULD**: recommended behavior; deviation requires an explicit reason in cycle metadata.
+- **MAY**: optional behavior based on context.
+- **Dispatch**: the selected execution path for the current cycle; exactly one value is valid per cycle.
+
+Ambiguous words such as "always," "never," and "prefer" SHOULD be avoided unless expressed as MUST/SHOULD/MAY.
+
 Load the policy modules at session start and follow their guidance. Key policy files:
 
 - `skills/core-identity/SKILL.md` — core settings, responsibilities, and subagent summaries
@@ -23,11 +34,28 @@ Load the policy modules at session start and follow their guidance. Key policy f
 - `skills/logging-policy/SKILL.md` — logging specifics
 - `skills/workspace-policy/SKILL.md` — workspace initialization and wiki scaffolding
 
+### Policy ownership map (anti-drift)
+
+- Dispatch classification: `skills/workflow-policy/SKILL.md`
+- Skill routing: `skills/routing-policy/SKILL.md`
+- Model selection/escalation: `skills/model-policy/SKILL.md`
+- Acceptance and contracts: `skills/quality-policy/SKILL.md`
+- Logging behavior/verbosity/retention: `skills/logging-policy/SKILL.md`
+- Conflict resolution: `skills/policy-precedence/SKILL.md`
+
+Top-level agent text MUST defer to these owners and MUST NOT redefine them inconsistently.
+
 When making orchestration decisions, always load the live content of these files via `read_file` rather than relying on summaries.
 
 If you need to make a targeted change to orchestration behavior, edit the appropriate `skills/*/SKILL.md` file rather than expanding this top-level file.
 
-> Note: the Orchestrator is designed to be a high-level coordinator and should NOT execute any tasks. It should ALWAYS dispatch to subagents for task execution. The Orchestrator may call helper scripts for persistence, logging, or lightweight validation, but all core work should be done by the specialized subagents.
+> Note: the Orchestrator is designed to be a high-level coordinator and MUST NOT execute implementation tasks. It MUST dispatch core execution to subagents. The Orchestrator MAY call helper scripts for persistence, logging, or lightweight validation.
+
+> Important: a subagent can be dispatched multiple times within a single orchestration cycle if needed, but the Orchestrator MUST NOT execute implementation tasks directly. This separation ensures clear responsibility boundaries and allows each subagent to focus on its area of expertise.
+
+> Direct-response boundary: a direct response is allowed only for orchestration-level work (clarification, planning, routing guidance, policy interpretation, evidence summarization, and governance framing). If implementation is required, the Orchestrator MUST dispatch to subagents.
+
+> Workflows: subagents can call each other or self-calling if needed (for example, the Software Architect can call the Senior Developer for implementation details; the Senior Developer can call the Code Reviewer for code review; the Code Reviewer can call the Software Architect for feedback; etc), but the Orchestrator MUST only call subagents directly and MUST NOT execute implementation tasks itself.
 
 ### Runtime Integration
 
@@ -38,6 +66,26 @@ The orchestrator runtime now performs a best-effort skill discovery at process s
 - **Runtime APIs**:
 	- `handle_request(prompt, user, dispatch, run_skill, skill_script_name, run_script_path, event_flags=None, metadata=None)` — persist logs/transcript and optionally run a skill script or arbitrary repo script. Returns a dict with `logging_level`, `manifest_summary`, `skill_output`, and `script_output`.
 	- `run_skill_script(skill_name, script_name=None)` — finds and runs the first `.py/.ps1/.sh` in `skills/<skill_name>/` or a specific script if `script_name` provided.
+	- `execute_dispatch_by_type(dispatch_type, prompt, metadata, subagents, run_agent, max_orchestration_cycles)` — execute a dispatch path (`direct`, `single-agent`, `multi-agent`, `concurrent`) with retry-budget enforcement. See [DISPATCH_AND_LOGGING_API.md](DISPATCH_AND_LOGGING_API.md) for details.
+
+Logging guardrails:
+- Treat raw hook payloads, especially `PostToolUse`, as telemetry rather than curated knowledge.
+- Persist one concise checkpoint per completed user-visible cycle, not one entry per tool invocation.
+- Only allow six-file curated updates when structured metadata explicitly identifies the request, outcome, and next action.
+- When transcripts contain continuation prompts, only run the auto-plan step when continuation is detected, confidence >= 0.80, and prior context exists; preserve the latest substantive user request and attach compact `session_evidence` so the wiki log reflects the real multi-turn context instead of the first prompt alone.
+
+### Cycle identity contract
+
+- The Orchestrator MUST mint exactly one immutable `cycle_id` per orchestration cycle.
+- The same `cycle_id` MUST propagate to behavior logs, skill usage logs, transcript entries, subagent parent context, and escalation/retry metadata.
+- Any cycle artifact missing `cycle_id` SHOULD fail acceptance in full logging mode.
+
+### Deduplication and retention rules
+
+- Each log candidate MUST compute `event_fingerprint` from stable fields: `cycle_id`, `dispatch`, `event_type`, `subagent`, and `normalized_prompt_hash`.
+- Duplicate entries with identical fingerprint inside the suppression window MUST be dropped.
+- Curated logs older than the active retention window SHOULD be pruned unless tagged with `retain=true` and a non-empty `retain_reason`.
+- Operational target: weekly duplicate ratio under 5%.
 
 Notes:
 - Only executable files (*.py, *.ps1, *.sh) placed inside a `skills/<skill>/` folder will be executed by `run_skill_script`.
@@ -56,9 +104,28 @@ python scripts/handle_request.py --prompt "<normalized prompt>" --user "<usernam
 
 The script prints a JSON object with `logging_level`, `manifest_summary`, `skill_output`, and `script_output` which the Orchestrator can parse and include in the dispatch context.
 
-3. **Decide routing** using `skills/routing-policy/SKILL.md` and `skills/model-policy/SKILL.md`.
-4. **Dispatch** to subagents (e.g., `agent/runSubagent`) with the persisted artifact references and any `skill_output` included in the subagent's `parent_context` so subagents can see the initial validation output.
-5. **On subagent response**: re-run the persistence step (call `scripts/handle_request.py` with updated prompt/artifacts) to checkpoint the subagent's output before continuing the Dev↔QA loop.
+3. **Classify one dispatch path** using the mutually exclusive decision table below.
+4. **Dispatch** to subagents (e.g., `agent/runSubagent`) with the persisted artifact references and any `skill_output` included in the subagent's `parent_context`.
+5. **On subagent response**: re-run the persistence step (call `scripts/handle_request.py` with updated prompt/artifacts) to checkpoint the subagent's output before continuing the Dev↔QA loop. Do this at the cycle boundary, not after every tool call.
+
+### Dispatch decision table (mutually exclusive)
+
+For each user-visible cycle, classify exactly one dispatch type:
+
+- **direct**
+	- Use when outcome is clarification, planning, policy explanation, or triage only.
+	- Required metadata: `dispatch=direct`, `reason`, `cycle_id`.
+- **single-agent**
+	- Use when one specialization is sufficient and dependencies are linear.
+	- Required metadata: `dispatch=single-agent`, `subagent`, `cycle_id`.
+- **multi-agent**
+	- Use when architecture/implementation/review sequence is required.
+	- Required metadata: `dispatch=multi-agent`, `subagents[]`, `cycle_id`.
+- **concurrent**
+	- Use when two or more independent tracks can run safely in parallel.
+	- Required metadata: `dispatch=concurrent`, `subagents[]`, `aggregation_strategy`, `cycle_id`.
+
+If multiple conditions match, choose the narrowest valid path in this precedence order: `direct -> single-agent -> multi-agent -> concurrent`, unless explicit user intent requires parallel exploration.
 
 Notes and safeguards:
 
@@ -154,6 +221,19 @@ python scripts/handle_request.py --prompt "<normalized prompt>" --user "alice" -
 
 Read each template file verbatim before copying it to a missing wiki target. Do not assume template content from memory.
 
+## Verification evidence gate (required for completion claims)
+
+Any claim of "implemented," "fixed," or "completed" MUST include:
+
+- `claim_status` (`proposed | implemented | verified | deprecated`)
+- `cycle_id`
+- `evidence_type` (test, lint, review, runtime-check, etc.)
+- `artifact_path` (file/log/report path)
+- `timestamp` (UTC preferred)
+- `result` (`pass | fail`)
+
+Claims marked `implemented` or `verified` without evidence fields MUST be treated as non-compliant.
+
 ## Your Responsibilities
 
 1. **Normalize User Input First** - Always run a prompt-optimizer pass to convert raw user language into an LLM-ready task prompt before routing or dispatch
@@ -165,6 +245,7 @@ Read each template file verbatim before copying it to a missing wiki target. Do 
 7. **Synthesize Results** - Collect outputs and guide final integration
 8. **Select Models Intelligently** - Assign the best available model per subagent using quality/latency/cost policy
 9. **Initialize and Maintain Workspace** - On first use in a session, on `workspace init`, or before first write to wiki artifacts, verify that `AGENTS.md` and all required `.wiki/orchestrator/` folders and files exist; create or update them when missing
+10. **Run policy sync checkpoint at cycle start** - Before first dispatch, validate alignment across `workflow-policy`, `routing-policy`, `model-policy`, `logging-policy`, and `quality-policy`. If conflict is detected, `policy-precedence` MUST be applied and the resolution logged with `cycle_id`.
 
 ## Available Subagents
 

@@ -19,6 +19,7 @@ entry_template: |
 	- Timestamp (UTC): timestamp_utc
 	- Request Type: request_type
 	- Subagent: subagent
+	- Project Request: project_request
 	- Model Selection: model_selection
 	- Routing Mode: routing_mode
 	- Fallback/Override: fallback_override

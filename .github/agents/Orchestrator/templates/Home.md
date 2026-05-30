@@ -13,6 +13,14 @@ This wiki tracks subagent behavior, recurring patterns, and orchestrator self-im
 - [Learning-Backlog](Learning-Backlog.md)
 - [Runbook](Runbook.md)
 
+## Knowledge Pages
+
+- [Knowledge Index](knowledge/Index.md)
+- [Glossary](knowledge/Glossary.md)
+- [What We Learned — Skills](knowledge/Learned-Skills.md)
+- [What We Learned — Routing](knowledge/Learned-Routing.md)
+- [What We Learned — Model Selection](knowledge/Learned-Model-Selection.md)
+
 ## Operating Cycle
 
 0. Read [Project-Context-Log](Project-Context-Log.md) at day start and capture a short Today Context summary.
@@ -23,6 +31,7 @@ This wiki tracks subagent behavior, recurring patterns, and orchestrator self-im
 5. Add actionable fixes to [Learning-Backlog](Learning-Backlog.md).
 6. Apply one safe policy improvement and document in [Runbook](Runbook.md).
 7. Append short execution context to [Project-Context-Log](Project-Context-Log.md).
+8. Refresh the generated knowledge layer and consult the knowledge pages before repeating a known fix.
 
 ## Cadence
 

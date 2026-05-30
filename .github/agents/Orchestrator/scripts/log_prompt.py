@@ -23,41 +23,36 @@ from typing import Any, Dict, List
 import textwrap
 import re
 
-TEMPLATES_DIR_NAME = ".wiki/orchestrator"
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-LOG_COMMANDS: Dict[str, List[str]] = {
-    "/full-log": [
-        "Behavior-Log.md",
-        "Behavior-Patterns.md",
-        "Learning-Backlog.md",
-        "Project-Context-Log.md",
-        "Runbook.md",
-        "Skill-Usage-Log.md",
-    ],
-    "/all-log": [
-        "Behavior-Log.md",
-        "Behavior-Patterns.md",
-        "Learning-Backlog.md",
-        "Project-Context-Log.md",
-        "Runbook.md",
-        "Skill-Usage-Log.md",
-    ],
-    "/critical": ["Behavior-Log.md", "Project-Context-Log.md", "Runbook.md"],
-    "/error": ["Behavior-Log.md", "Project-Context-Log.md"],
-    "/warning": ["Behavior-Log.md", "Behavior-Patterns.md"],
-    "/warn": ["Behavior-Log.md", "Behavior-Patterns.md"],
-    "/info": ["Skill-Usage-Log.md", "Behavior-Log.md"],
-    "/debug": ["Runbook.md", "Learning-Backlog.md"],
-    "/trace": ["Learning-Backlog.md"],
-    "/behavior-log": ["Behavior-Log.md"],
-    "/behavior": ["Behavior-Log.md"],
-    "/patterns-log": ["Behavior-Patterns.md"],
-    "/pattern": ["Behavior-Patterns.md"],
-    "/learning-backlog": ["Learning-Backlog.md"],
-    "/project-context": ["Project-Context-Log.md"],
-    "/runbook": ["Runbook.md"],
-    "/skill-usage": ["Skill-Usage-Log.md"],
+from prompt_registry import build_manifest, get_append_command_targets, get_command_spec
+
+TEMPLATES_DIR_NAME = ".wiki/orchestrator"
+NOISE_TEXT_VALUES = {
+    "",
+    "-",
+    "none",
+    "unknown",
+    "n/a",
+    "not applicable",
+    "post-tool invocation",
+    "hook-triggered logging",
+    "hook-triggered template render",
+    "full-log template verification",
+    "structured full-log template rendering",
 }
+UNRESOLVED_ENTRY_PATTERNS = (
+    re.compile(r"### (?:OBS|PAT|LRN|CTX|CHG)-\d{8}-XXX"),
+    re.compile(r"### (?:SKL|SKILL)-\d{8}(?:-)?HHMMSS"),
+    re.compile(r"CB-\d{8}-XX"),
+    re.compile(r"^- Status: candidate \| applied \| rolled_back$", re.MULTILINE),
+    re.compile(r"^- Status: pending \| in_progress \| done \| rolled_back$", re.MULTILINE),
+    re.compile(r"^- Decision: keep \| revise \| rollback$", re.MULTILINE),
+)
+
+LOG_COMMANDS: Dict[str, List[str]] = get_append_command_targets()
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -108,10 +103,12 @@ def get_author(repo_root: Path) -> str:
         return "unknown"
 
 
-def format_entry(command: str, author: str, message: str, tags: str | None = None) -> str:
+def format_entry(command: str, author: str, message: str, tags: str | None = None, cycle_id: str | None = None) -> str:
     now = datetime.now(timezone.utc).astimezone()
     timestamp = now.isoformat(timespec="seconds")
     header = f"### {timestamp} — {command} — {author}\n\n"
+    if cycle_id:
+        header += f"Cycle: {cycle_id}\n\n"
     if tags:
         header += f"Tags: {tags}\n\n"
     body = message.strip() + "\n\n"
@@ -150,10 +147,25 @@ def _stringify_context_value(value: Any) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, (list, tuple, set)):
+        if any(isinstance(item, (dict, list, tuple, set)) for item in value):
+            return json.dumps(list(value), ensure_ascii=False, indent=2)
         return ", ".join(_stringify_context_value(item) for item in value if _stringify_context_value(item))
     if isinstance(value, dict):
-        return ", ".join(f"{key}={_stringify_context_value(item)}" for key, item in value.items())
+        return json.dumps(value, ensure_ascii=False, indent=2)
     return str(value)
+
+
+def _is_noise_text(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return True
+    normalized = stripped.lower()
+    if normalized in NOISE_TEXT_VALUES:
+        return True
+    return (
+        (stripped.startswith('{') and stripped.endswith('}'))
+        or (stripped.startswith('[') and stripped.endswith(']'))
+    )
 
 
 def _parse_context_payload(message: str) -> tuple[str, Dict[str, Any] | None]:
@@ -225,6 +237,34 @@ def _normalize_internal_log_links(text: str) -> str:
     return pattern.sub(replace, text)
 
 
+def _replace_structured_ids(template: str, context_values: Dict[str, str]) -> str:
+    replacements = {
+        'OBS-YYYYMMDD-XXX': context_values.get('obs_id', ''),
+        'PAT-YYYYMMDD-XXX': context_values.get('pat_id', ''),
+        'LRN-YYYYMMDD-XXX': context_values.get('lrn_id', ''),
+        'CTX-YYYYMMDD-XXX': context_values.get('ctx_id', ''),
+        'CHG-YYYYMMDD-XXX': context_values.get('chg_id', ''),
+        'SKL-YYYYMMDDHHMMSS': context_values.get('skl_id', ''),
+        'SKILL-YYYYMMDD-HHMMSS': context_values.get('skl_id', ''),
+        'CB-YYYYMMDD-XX': context_values.get('compaction_batch', ''),
+    }
+
+    rendered = template
+    for token, value in replacements.items():
+        if value:
+            rendered = rendered.replace(token, value)
+    return rendered
+
+
+def _validate_rendered_entry(command: str, entry: str) -> str | None:
+    if command not in {'/full-log', '/all-log', '/info'}:
+        return None
+    for pattern in UNRESOLVED_ENTRY_PATTERNS:
+        if pattern.search(entry):
+            return f"Unresolved template token matched pattern: {pattern.pattern}"
+    return None
+
+
 def _find_prompt_templates(repo_root: Path, cmd_name: str) -> tuple[Dict[str, str], str | None]:
     """Find per-target prompt templates in .github/prompts/<cmd_name>.prompt.md.
 
@@ -290,7 +330,7 @@ def _render_template(
 
     context_values = {_normalize_label(str(key)): _stringify_context_value(value) for key, value in (context or {}).items()}
 
-    tpl = template
+    tpl = _replace_structured_ids(template, context_values)
     for token, value in (
         ('YYYYMMDDHHMMSS', date + time),
         ('yyyymmddhhmmss', date + time),
@@ -317,13 +357,16 @@ def _render_template(
         field_match = re.match(r'^(?P<indent>\s*-\s*)(?P<label>[^:]+):(?P<rest>.*)$', line)
         if field_match:
             label = field_match.group('label').strip()
+            field_value = field_match.group('rest').strip()
             aliases = _context_key_aliases(label)
+            norm_label = aliases[0]
 
             # Prefer structured context values when available.
             value = next((context_values.get(alias, '') for alias in aliases if context_values.get(alias, '')), '')
+            if value and _is_noise_text(value) and norm_label not in {'session_evidence'}:
+                value = ''
 
             if not value:
-                norm_label = aliases[0]
                 if norm_label == 'date':
                     value = context_values.get('date', iso)
                 elif norm_label == 'timestamp_utc':
@@ -335,6 +378,9 @@ def _render_template(
                 elif norm_label == 'summary':
                     value = context_values.get('summary', '')
 
+            if value and _is_noise_text(value) and norm_label not in {'session_evidence'}:
+                value = ''
+
             if value:
                 if '\n' in value:
                     out_lines.append(f"{field_match.group('indent')}{label}: |")
@@ -344,8 +390,11 @@ def _render_template(
                     out_lines.append(f"{field_match.group('indent')}{label}: {value}")
                 continue
 
-            if norm_label == 'contract_score':
+            if '](' in field_value and not _is_noise_text(field_value):
+                out_lines.append(line)
                 continue
+
+            continue
 
         if low.startswith('- date:'):
             out_lines.append(f"- Date: {context_values.get('date', iso)}")
@@ -374,15 +423,25 @@ def _render_template(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Append a prompt-style log entry to repository template log files.")
-    parser.add_argument("command", help="Prompt command name (e.g. /full-log, /info)")
+    parser.add_argument("command", nargs="?", help="Prompt command name (e.g. /full-log, /info)")
     parser.add_argument("message", nargs="?", help="Message text to log. If omitted, read from stdin.")
     parser.add_argument("-a", "--author", help="Author name to include in the entry.")
     parser.add_argument("-t", "--tags", help="Comma-separated tags to add to the entry.")
     parser.add_argument("--preview", action="store_true", help="Print the generated entries but do not write files.")
+    parser.add_argument("--manifest", action="store_true", help="Print the explicit prompt-command manifest and exit.")
+    parser.add_argument("--cycle-id", help="Optional orchestration cycle ID to include in each entry.")
     parser.add_argument("--root", help="Repository root (for testing). If omitted, discovered automatically.")
     args = parser.parse_args()
 
     repo_root = Path(args.root) if args.root else find_repo_root(Path(__file__))
+
+    if args.manifest:
+        print(json.dumps(build_manifest(repo_root), indent=2, ensure_ascii=False))
+        return 0
+
+    if not args.command:
+        parser.error("the following arguments are required: command")
+
     templates_dir = repo_root / TEMPLATES_DIR_NAME
 
     if not templates_dir.exists():
@@ -393,6 +452,13 @@ def main() -> int:
     if not cmd.startswith("/"):
         cmd = "/" + cmd
     cmd_low = cmd.lower()
+
+    spec = get_command_spec(cmd_low)
+    if spec and not spec.supports_log_append:
+        print(f"Command {cmd} is registered as a {spec.category} workflow and is not supported by the append-only log writer.")
+        if spec.prompt_file:
+            print(f"Prompt source: .github/prompts/{spec.prompt_file}")
+        return 2
 
     targets = LOG_COMMANDS.get(cmd_low)
     if targets is None:
@@ -417,10 +483,12 @@ def main() -> int:
         return 1
 
     message_body, context_payload = _parse_context_payload(msg)
+    cycle_id = args.cycle_id or (context_payload.get("cycle_id") if isinstance(context_payload, dict) else None)
 
     author = args.author or get_author(repo_root)
 
     entries: Dict[Path, str] = {}
+    validation_errors: list[str] = []
     # Attempt to find prompt-based entry templates for this command in prompts/
     cmd_name = cmd_low.lstrip('/')
     prompt_templates, default_template = _find_prompt_templates(repo_root, cmd_name)
@@ -430,10 +498,24 @@ def main() -> int:
         prompt_tpl = prompt_templates.get(f) or default_template
         if prompt_tpl:
             target_context = _context_for_target(context_payload, f)
+            if cycle_id and isinstance(target_context, dict):
+                target_context.setdefault("cycle_id", cycle_id)
             entry = _render_template(prompt_tpl, message_body, author, args.tags, context=target_context)
         else:
-            entry = format_entry(cmd, author, msg, args.tags)
+            entry = format_entry(cmd, author, msg, args.tags, cycle_id=cycle_id)
+        validation_error = _validate_rendered_entry(cmd_low, entry)
+        if validation_error:
+            if args.preview:
+                entry = f"<!-- WARNING: {validation_error} -->\n\n{entry}"
+            else:
+                validation_errors.append(f"{path.name}: {validation_error}")
         entries[path] = entry
+
+    if validation_errors:
+        print("Refusing to write unresolved curated log entries:")
+        for error in validation_errors:
+            print(f" - {error}")
+        return 1
 
     if args.preview:
         print("--- Preview (no files written) ---")

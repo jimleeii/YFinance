@@ -79,6 +79,23 @@ If any checklist items are missing:
    - In Follow-up recommendations: "Reviewer should verify [missing item]"
 4. **Log the gap** (optional, to `.wiki/orchestrator/Behavior-Log.md` for self-improvement)
 
+### Step 4a: Architecture Gap Detection (Senior Developer only)
+
+When validating a **Senior Developer** response with `status: partial`, additionally scan the `Uncertainties` list for architecture-related keywords:
+
+| Keyword | Meaning |
+|---------|---------|
+| `architecture gap` | Overall design is incomplete |
+| `design undefined` | A component or service has no design spec |
+| `interface missing` | A required API or interface contract is absent |
+| `boundary unclear` | Module/service ownership is ambiguous |
+| `schema conflict` | Data model or DB schema contradicts assumptions |
+| `contract` | Expected interface contract not established |
+| `dependency` | Upstream or downstream dependency not designed |
+| `component` | A required component has no specification |
+
+If **any** uncertainty contains these keywords, mark the response with `escalation_required: true` and include `Escalation: developer→architect` in Follow-up recommendations. The Orchestrator's `workflow-policy` will then trigger the Developer→Architect escalation path.
+
 ### Step 5: Return Validated Response
 
 Only after passing validation (or being marked as `partial` with clear uncertainties) should the subagent return the response to the Orchestrator.

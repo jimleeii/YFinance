@@ -55,6 +55,22 @@ public sealed class NativeCliContractTests
         Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("message").GetString()));
     }
 
+    [Fact]
+    public async Task FundamentalsJson_MissingSymbol_ReturnsValidationErrorJson_WithExitCode2()
+    {
+        var result = await NativeCliProcess.RunAsync("fundamentals-json");
+
+        Assert.Equal(2, result.ExitCode);
+        using var json = ParseJson(result.StdOut);
+
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("ok").GetBoolean());
+
+        var error = root.GetProperty("error");
+        Assert.Equal("validation_error", error.GetProperty("code").GetString());
+        Assert.Contains("--symbol", error.GetProperty("message").GetString() ?? string.Empty);
+    }
+
     private static JsonDocument ParseJson(string text)
     {
         Assert.False(string.IsNullOrWhiteSpace(text));

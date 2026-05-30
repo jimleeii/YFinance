@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -36,6 +35,11 @@ try:
     from src.trigger_test_prompt import extract_skill_usage as _extract_skill_usage
 except Exception:  # pragma: no cover - fallback when package import is unavailable
     _extract_skill_usage = None
+
+try:
+    from hooks.log_hooks import normalize_checkpoint_metadata as _normalize_checkpoint_metadata
+except Exception:  # pragma: no cover - fallback when package import is unavailable
+    _normalize_checkpoint_metadata = None
 
 
 def _score_transcript(text: str, subagent: str | None) -> str | None:
@@ -66,9 +70,10 @@ def _score_transcript(text: str, subagent: str | None) -> str | None:
     if role:
         cmd += ["--role", role]
     try:
+        safe_text = _utf8_backslashreplace_text(text)
         result = subprocess.run(
             cmd,
-            input=text,
+            input=safe_text,
             capture_output=True,
             text=True,
             timeout=15,
@@ -138,8 +143,25 @@ def _unique_text_list(*values: Any) -> list[str]:
     return merged
 
 
+def _merge_unique_text_lists(*sources: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for item in _unique_text_list(source):
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _utf8_backslashreplace_text(text: str) -> str:
+    return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
 
 
 def _strip_role_prefix(line: str) -> str:
@@ -236,6 +258,291 @@ def _looks_like_failure(text: str) -> bool:
     return any(term in lowered for term in failure_terms) and not any(term in lowered for term in success_terms)
 
 
+def _extract_conversation_blocks(text: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
+    current_role: Optional[str] = None
+    current_lines: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        match = re.match(r"^(User|Assistant|Copilot|System)\s*:\s*(.*)$", line, re.IGNORECASE)
+        if match:
+            if current_role and any(item.strip() for item in current_lines):
+                blocks.append((current_role, "\n".join(current_lines).strip()))
+            current_role = match.group(1).lower()
+            current_lines = [match.group(2).strip()] if match.group(2).strip() else []
+            continue
+
+        if current_role:
+            current_lines.append(line)
+
+    if current_role and any(item.strip() for item in current_lines):
+        blocks.append((current_role, "\n".join(current_lines).strip()))
+
+    if not blocks and text.strip():
+        blocks.append(("assistant", text.strip()))
+
+    return blocks
+
+
+CONTINUATION_REQUEST_RE = re.compile(
+    r'^(?:please\s+)?(?:approve(?:d)?|proceed|go(?:\s+ahead)?|continue|carry\s+on|keep\s+going)(?:\s+please)?[.!?]*$',
+    re.IGNORECASE,
+)
+
+
+def _is_continuation_request(value: str) -> bool:
+    normalized = _normalize_text(_strip_role_prefix(value))
+    if not normalized:
+        return False
+    return bool(CONTINUATION_REQUEST_RE.fullmatch(normalized))
+
+
+def _unique_text_messages(*messages: str) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for message in messages:
+        text = _normalize_text(_strip_role_prefix(message))
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(text)
+    return merged
+
+
+def _select_project_request(user_messages: list[str]) -> Optional[str]:
+    prompts = _unique_text_messages(*user_messages)
+    if not prompts:
+        return None
+
+    substantive_prompts = [prompt for prompt in prompts if not _is_continuation_request(prompt)]
+    if substantive_prompts:
+        return substantive_prompts[-1]
+
+    return prompts[-1]
+
+
+def _build_session_evidence(
+    turn_count: int,
+    user_messages: list[str],
+    assistant_checkpoint: str,
+) -> Dict[str, Any]:
+    evidence: Dict[str, Any] = {
+        "turn_count": turn_count,
+    }
+
+    prompts = _unique_text_messages(*user_messages)
+    if prompts:
+        evidence["user_prompt_count"] = len(prompts)
+        if len(prompts) == 1:
+            evidence["user_prompts"] = prompts
+        else:
+            evidence["user_prompts"] = [prompts[0], prompts[-1]]
+
+    if assistant_checkpoint:
+        evidence["assistant_checkpoint"] = assistant_checkpoint
+
+    return evidence
+
+
+def _extract_section_body(text: str, *heading_patterns: str) -> Optional[str]:
+    lines = text.splitlines()
+    normalized_patterns = tuple(pattern.lower() for pattern in heading_patterns)
+
+    for index, raw_line in enumerate(lines):
+        heading_match = re.match(r"^#{2,6}\s+(.*\S)\s*$", raw_line.strip())
+        if not heading_match:
+            continue
+        heading_text = heading_match.group(1).strip().lower()
+        if not any(pattern in heading_text for pattern in normalized_patterns):
+            continue
+
+        collected: list[str] = []
+        for candidate in lines[index + 1:]:
+            if re.match(r"^#{2,6}\s+", candidate.strip()):
+                break
+            collected.append(candidate)
+        body = "\n".join(collected).strip()
+        if body:
+            return body
+
+    return None
+
+
+def _extract_bullets(text: str) -> list[str]:
+    bullets: list[str] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith(("- ", "* ")):
+            bullets.append(_normalize_text(stripped[2:]))
+    return bullets
+
+
+def _summarize_lines(lines: list[str], limit: int = 4) -> Optional[str]:
+    normalized = [_normalize_text(line).rstrip(".") for line in lines if _normalize_text(line)]
+    if not normalized:
+        return None
+    return "; ".join(normalized[:limit])
+
+
+def _first_paragraph(text: str) -> Optional[str]:
+    collected: list[str] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            if collected:
+                break
+            continue
+        if stripped.startswith(("#", "- ", "* ", "> ")) and collected:
+            break
+        if stripped.startswith(("#", "- ", "* ", "> ")):
+            continue
+        collected.append(stripped)
+    paragraph = _normalize_text(" ".join(collected))
+    return paragraph or None
+
+
+def _extract_file_references(text: str) -> list[str]:
+    matches = re.findall(
+        r"`([^`\n]+?\.(?:cs|xaml(?:\.cs)?|csproj|sln|md|json|xml|ya?ml|config|ps1|py|txt))`",
+        text,
+        flags=re.IGNORECASE,
+    )
+    unique: list[str] = []
+    seen: set[str] = set()
+    for match in matches:
+        cleaned = match.strip()
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique.append(cleaned)
+    return unique
+
+
+def _infer_decision(observed_result: Optional[str], stage: str, fallback_text: str) -> Optional[str]:
+    evidence = _normalize_text(" ".join(part for part in (observed_result, fallback_text) if part))
+    lowered = evidence.lower()
+    if stage == "completed" and any(token in lowered for token in ("passed", "succeeded", "0 errors", "0 warnings / 0 errors")):
+        return "keep"
+    if stage == "blocked" or _looks_like_failure(evidence):
+        return "revise"
+    if stage in {"completed", "checkpoint"}:
+        return "keep"
+    return None
+
+
+def _infer_checkpoint_metadata_from_transcript(text: str) -> Dict[str, Any]:
+    blocks = _extract_conversation_blocks(text)
+    user_messages = [content for role, content in blocks if role == "user" and content.strip()]
+    assistant_messages = [content for role, content in blocks if role in {"assistant", "copilot"} and content.strip()]
+
+    project_request = _select_project_request(user_messages)
+    latest_assistant = assistant_messages[-1] if assistant_messages else text.strip()
+
+    def _checkpoint_score(block: str) -> tuple[int, int]:
+        lowered = block.lower()
+        score = 0
+        if "## verification" in lowered:
+            score += 5
+        if any(token in lowered for token in ("## done", "## what changed", "## what i changed")):
+            score += 6
+        if any(token in lowered for token in ("## proposed split", "## next", "## what's in it", "## what’s in it")):
+            score += 3
+        if _extract_file_references(block):
+            score += 2
+        if any(token in lowered for token in ("passed", "succeeded", "0 errors", "plan is saved", "implementation plan is saved")):
+            score += 2
+        return score, len(block)
+
+    best_assistant = max(assistant_messages, key=_checkpoint_score, default=latest_assistant)
+    lowered_best = best_assistant.lower()
+
+    summary = _first_paragraph(best_assistant) or _infer_summary_from_text(best_assistant)
+    verification_section = _extract_section_body(best_assistant, "verification")
+    notes_section = _extract_section_body(best_assistant, "notes")
+    next_section = _extract_section_body(best_assistant, "next")
+    work_items_section = _extract_section_body(best_assistant, "new files", "updated files", "recommended approach", "what's in it", "what’s in it")
+
+    files_touched = _merge_unique_text_lists(
+        _extract_file_references(best_assistant),
+        _extract_file_references(latest_assistant),
+    )
+
+    change_applied = _first_paragraph(
+        _extract_section_body(best_assistant, "what changed", "what i changed", "done") or best_assistant
+    )
+    completed = _summarize_lines(_extract_bullets(work_items_section or best_assistant))
+    observed_result = _summarize_lines(_extract_bullets(verification_section or ""))
+    if not observed_result:
+        observed_result = _first_paragraph(verification_section or "")
+
+    next_action = _first_paragraph(next_section or "")
+    if not next_action and notes_section:
+        note_match = re.search(r"if you want, i can (.+?)(?:\.|$)", notes_section, re.IGNORECASE)
+        if note_match:
+            next_action = _normalize_text(note_match.group(1))
+    if not next_action and best_assistant:
+        next_match = re.search(r"if this looks good, i can (.+?)(?:\.|$)", best_assistant, re.IGNORECASE)
+        if next_match:
+            next_action = _normalize_text(next_match.group(1))
+
+    stage = "in_progress"
+    if any(token in lowered_best for token in ("## done", "## what changed", "## what i changed")):
+        stage = "completed"
+    elif _looks_like_failure(latest_assistant):
+        stage = "blocked"
+    elif any(token in lowered_best for token in ("## proposed split", "implementation plan is saved", "## next", "## what's in it", "## what’s in it")):
+        stage = "checkpoint"
+
+    blockers_risks = None
+    if stage == "blocked" or _looks_like_failure(latest_assistant):
+        blockers_risks = _infer_summary_from_text(latest_assistant)
+
+    in_progress = None
+    if stage != "completed":
+        in_progress = _infer_summary_from_text(latest_assistant)
+
+    decision = _infer_decision(observed_result, stage, latest_assistant)
+    session_evidence = _build_session_evidence(
+        turn_count=len(blocks),
+        user_messages=user_messages,
+        assistant_checkpoint=_first_paragraph(latest_assistant) or _infer_summary_from_text(latest_assistant),
+    )
+
+    inferred: Dict[str, Any] = {}
+    if project_request:
+        inferred["project_request"] = project_request
+        inferred.setdefault("request_title", project_request)
+    if summary:
+        inferred["summary"] = summary
+    if change_applied:
+        inferred["change_applied"] = change_applied
+    if completed:
+        inferred["completed"] = completed
+    if in_progress:
+        inferred["in_progress"] = in_progress
+    if blockers_risks:
+        inferred["blockers_risks"] = blockers_risks
+    if next_action:
+        inferred["next_action"] = next_action
+    if observed_result:
+        inferred["observed_result"] = observed_result
+    if files_touched:
+        inferred["files_touched"] = files_touched
+    if session_evidence:
+        inferred["session_evidence"] = session_evidence
+    if stage:
+        inferred["stage"] = stage
+    if decision:
+        inferred["decision"] = decision
+
+    return inferred
+
+
 def _extract_structured_payload(raw_text: str) -> tuple[str, Dict[str, Any]]:
     stripped = raw_text.strip()
     if not stripped.startswith("{"):
@@ -303,6 +610,7 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
                 metadata.update(nested_persistence_metadata)
         _merge_model_resolution_metadata(metadata, parent_context.get("model_resolution"))
         for key in (
+            "curated_checkpoint",
             "subagent",
             "subagents",
             "selected_model",
@@ -319,12 +627,19 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
             "fallback_used",
             "fallback_reason",
             "override_phrase",
+            "normalized_request",
             "project_request",
+            "session_id",
+            "request_group_id",
+            "cycle_id",
+            "dedupe_key",
             "stage",
             "completed",
             "in_progress",
             "blockers_risks",
             "next_action",
+            "files_touched",
+            "session_evidence",
             "routing_policy_changes",
             "change_applied",
             "expected_effect",
@@ -332,11 +647,32 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
             "observed_result",
             "decision",
             "contract_score",
+            "request_title",
+            "title",
+            "overview",
+            "work_done",
+            "technical_details",
+            "important_files",
+            "next_steps",
+            "health",
+            "health_workspace_id",
+            "health_session_id",
+            "health_agent_id",
+            "health_task_family",
+            "health_model_id",
+            "health_state",
+            "health_action",
+            "health_failure_kind",
+            "health_reason",
+            "health_selected_candidates",
+            "health_suppressed_candidates",
+            "health_probe_candidate",
         ):
             if key in parent_context and key not in metadata:
                 metadata[key] = parent_context[key]
 
     for key in (
+        "curated_checkpoint",
         "subagent",
         "subagents",
         "selected_model",
@@ -353,12 +689,19 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
         "fallback_used",
         "fallback_reason",
         "override_phrase",
+        "normalized_request",
         "project_request",
+        "session_id",
+        "request_group_id",
+        "cycle_id",
+        "dedupe_key",
         "stage",
         "completed",
         "in_progress",
         "blockers_risks",
         "next_action",
+        "files_touched",
+        "session_evidence",
         "routing_policy_changes",
         "change_applied",
         "expected_effect",
@@ -366,6 +709,26 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
         "observed_result",
         "decision",
         "contract_score",
+        "request_title",
+        "title",
+        "overview",
+        "work_done",
+        "technical_details",
+        "important_files",
+        "next_steps",
+        "health",
+        "health_workspace_id",
+        "health_session_id",
+        "health_agent_id",
+        "health_task_family",
+        "health_model_id",
+        "health_state",
+        "health_action",
+        "health_failure_kind",
+        "health_reason",
+        "health_selected_candidates",
+        "health_suppressed_candidates",
+        "health_probe_candidate",
     ):
         if key in payload and key not in metadata:
             metadata[key] = payload[key]
@@ -402,7 +765,7 @@ def main() -> int:
         if not t.exists():
             print(f"Transcript file not found: {t}", file=sys.stderr)
             return 2
-        raw_transcript = t.read_text(encoding="utf-8")
+        raw_transcript = t.read_text(encoding="utf-8", errors="surrogateescape")
     else:
         if sys.stdin.isatty():
             print("No transcript provided via stdin or --transcript-file", file=sys.stderr)
@@ -448,6 +811,12 @@ def main() -> int:
             metadata["skills_used"] = _unique_text_list(metadata.get("skills_used"), metadata.get("skills_used_ordered"), inferred_skills)
             metadata["skills_used_ordered"] = metadata["skills_used"]
             metadata.setdefault("prompt_normalization", "performed" if any(skill.lower() == "prompt-optimizer" for skill in metadata["skills_used"]) else metadata.get("prompt_normalization", "not applicable"))
+        transcript_checkpoint = _infer_checkpoint_metadata_from_transcript(transcript_text)
+        for key, value in transcript_checkpoint.items():
+            if key == "files_touched":
+                metadata[key] = _unique_text_list(metadata.get(key), value)
+            elif value and not metadata.get(key):
+                metadata[key] = value
         spawn_payload = args.spawn_payload or (
             json.dumps(transcript_payload["spawn_payload"], ensure_ascii=False)
             if isinstance(transcript_payload.get("spawn_payload"), dict)
@@ -479,6 +848,12 @@ def main() -> int:
             metadata["skills_used"] = _unique_text_list(metadata.get("skills_used"), metadata.get("skills_used_ordered"), inferred_skills)
             metadata["skills_used_ordered"] = metadata["skills_used"]
             metadata.setdefault("prompt_normalization", "performed" if any(skill.lower() == "prompt-optimizer" for skill in metadata["skills_used"]) else "not applicable")
+        transcript_checkpoint = _infer_checkpoint_metadata_from_transcript(transcript_text)
+        for key, value in transcript_checkpoint.items():
+            if key == "files_touched":
+                metadata[key] = _unique_text_list(metadata.get(key), value)
+            elif value and not metadata.get(key):
+                metadata[key] = value
         spawn_payload = args.spawn_payload
         model_catalog = args.model_catalog
         global_default_model = args.global_default_model
@@ -488,6 +863,8 @@ def main() -> int:
     summary = summary or "Chat session end"
     tags = tags or "copilot-chat"
     dispatch_path = dispatch_path or "single-agent"
+    if _normalize_checkpoint_metadata:
+        metadata = _normalize_checkpoint_metadata(summary=summary, metadata=metadata, event_flags=event_flags, prompt_command=prompt_command)
 
     # Score the transcript against the contract-validator checklist and inject
     # the result into metadata before logging, but only when no upstream caller
@@ -501,7 +878,7 @@ def main() -> int:
     transcript_path = None
     if transcript_payload:
         tf = tempfile.NamedTemporaryFile(prefix="copilot_transcript_", suffix=".md", delete=False)
-        tf.write(transcript_text.encode("utf-8"))
+        tf.write(_utf8_backslashreplace_text(transcript_text).encode("utf-8"))
         tf.flush()
         tf.close()
         transcript_path = Path(tf.name)
@@ -509,51 +886,65 @@ def main() -> int:
         transcript_path = t
     else:
         tf = tempfile.NamedTemporaryFile(prefix="copilot_transcript_", suffix=".md", delete=False)
-        tf.write(raw_transcript.encode("utf-8"))
+        tf.write(_utf8_backslashreplace_text(raw_transcript).encode("utf-8"))
         tf.flush()
         tf.close()
         transcript_path = Path(tf.name)
 
     runner = ORCHESTRATOR_ROOT / "scripts" / "log_hook_runner.py"
-    cmd = [sys.executable, str(runner), "--phase", "post", "--summary", summary]
+    arg_lines = ["--phase", "post", "--summary", summary]
     if skills:
-        cmd += ["--skills", skills]
+        arg_lines += ["--skills", skills]
     if author:
-        cmd += ["--author", author]
+        arg_lines += ["--author", author]
     if tags:
-        cmd += ["--tags", tags]
+        arg_lines += ["--tags", tags]
     if dispatch_path:
-        cmd += ["--dispatch-path", dispatch_path]
+        arg_lines += ["--dispatch-path", dispatch_path]
     if event_flags:
-        cmd += ["--event-flags", json.dumps(event_flags, ensure_ascii=False)]
+        arg_lines += ["--event-flags", json.dumps(event_flags, ensure_ascii=False)]
     if metadata:
-        cmd += ["--metadata", json.dumps(metadata, ensure_ascii=False)]
+        arg_lines += ["--metadata", json.dumps(metadata, ensure_ascii=False)]
     if subagent_name:
-        cmd += ["--subagent-name", subagent_name]
+        arg_lines += ["--subagent-name", subagent_name]
     if spawn_payload:
-        cmd += ["--spawn-payload", spawn_payload]
+        arg_lines += ["--spawn-payload", spawn_payload]
     if model_catalog:
-        cmd += ["--model-catalog", model_catalog]
+        arg_lines += ["--model-catalog", model_catalog]
     if global_default_model:
-        cmd += ["--global-default-model", global_default_model]
+        arg_lines += ["--global-default-model", global_default_model]
     if minimum_tier:
-        cmd += ["--minimum-tier", minimum_tier]
+        arg_lines += ["--minimum-tier", minimum_tier]
     if args.force_persist:
-        cmd += ["--force-persist"]
+        arg_lines += ["--force-persist"]
     if prompt_command:
-        cmd += ["--prompt-command", prompt_command]
+        arg_lines += ["--prompt-command", prompt_command]
     if args.preview:
-        cmd += ["--preview"]
+        arg_lines += ["--preview"]
     if transcript_path:
-        cmd += ["--transcript-file", str(transcript_path)]
+        arg_lines += ["--transcript-file", str(transcript_path)]
 
-    # Run the runner
+    # Write args to a temp file to avoid Windows MAX_PATH (260-char) limit on
+    # long command lines that embed large JSON payloads inline.  argparse
+    # @-file syntax reads each line of the file as a separate argument.
+    args_file = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", prefix="copilot_runner_args_", suffix=".txt",
+            delete=False, encoding="utf-8",
+        ) as af:
+            af.write(_utf8_backslashreplace_text("\n".join(arg_lines)))
+            args_file = af.name
+
+        cmd = [sys.executable, str(runner), f"@{args_file}"]
         proc = subprocess.run(cmd, check=False)
         return proc.returncode
     finally:
-        # If we wrote a temp transcript file, leave it for audit purposes.
-        pass
+        if args_file:
+            try:
+                Path(args_file).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

@@ -19,6 +19,20 @@ def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
 
+def _allow_legacy_curated_fallback() -> bool:
+    return os.environ.get("ORCHESTRATOR_ALLOW_LEGACY_CURATED_FALLBACK", "0") in {"1", "true", "True"}
+
+
+def _write_legacy_fallback_artifact(wiki_root: str, stem: str, content: str) -> str:
+    artifacts_dir = os.path.join(wiki_root, "artifacts")
+    ensure_dir(artifacts_dir)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join(artifacts_dir, f"{stem}-{ts}.md")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return path
+
+
 DEFAULT_SKILL_HINTS = (
     "prompt-optimizer",
     "verification-before-completion",
@@ -217,6 +231,22 @@ def append_skill_usage_log(
             # Fall back to local append behaviour on error
             pass
 
+    if not _allow_legacy_curated_fallback():
+        artifact_path = _write_legacy_fallback_artifact(
+            wiki_root,
+            "legacy-skill-usage",
+            "\n".join(
+                [
+                    f"Timestamp (UTC): {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
+                    f"Routing Path: {routing_path}",
+                    f"Skills: {', '.join(usage.get('skills', [])) or '-'}",
+                    f"Prompt: {prompt}",
+                    f"Output: {output_text}",
+                ]
+            ) + "\n",
+        )
+        return {"path": artifact_path, **usage, "entry_id": None}
+
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     skills_text = ", ".join(usage["skills"]) if usage["skills"] else "-"
@@ -272,6 +302,20 @@ def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user", me
         except Exception:
             # fallback to local append
             pass
+
+    if not _allow_legacy_curated_fallback():
+        _write_legacy_fallback_artifact(
+            wiki_root,
+            "legacy-behavior",
+            "\n".join(
+                [
+                    f"Timestamp (UTC): {datetime.now(timezone.utc).replace(microsecond=0).isoformat()}",
+                    f"User: {user}",
+                    f"Prompt: {prompt}",
+                ]
+            ) + "\n",
+        )
+        return
 
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")

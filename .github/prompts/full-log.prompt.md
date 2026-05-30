@@ -23,9 +23,13 @@ entry_template: |
 	- Timestamp (UTC):
 	- Request Type:
 	- Subagent:
+	- Project Request:
 	- Model Selection: selected_model=<id> | task_type=<type> | criticality=<P0|P1|P2|P3>
 	- Routing Mode: persistent=<adaptive-score-based|strict-deterministic> | effective=<adaptive-score-based|strict-deterministic> | source=<default|user-override|fallback-on-failure>
 	- Fallback/Override: fallback_used=<yes|no> | fallback_reason=<if any> | override_phrase=<if any>
+	- Health Scope: health_workspace_id=<id> | health_session_id=<id> | health_agent_id=<id> | health_task_family=<type> | health_model_id=<id>
+	- Health Decision: health_state=<closed|half-open|open> | health_action=<allow|probe|suppress> | health_failure_kind=<if any> | health_reason=<if any>
+	- Health Candidates: health_selected_candidates=<comma-separated> | health_suppressed_candidates=<comma-separated> | health_probe_candidate=<if any>
 	- Skills Used:
 	- Prompt Normalization: performed | skipped | not applicable
 	- Contract Score:
@@ -84,6 +88,8 @@ entry_template: |
     - In Progress:
     - Blockers/Risks:
     - Next Action:
+	- Files Touched:
+	- Session Evidence:
   - Routing/Policy Changes: mode_change=<yes|no> | override=<yes|no> | fallback=<yes|no>
 	- Related: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX), [Runbook](Runbook.md#CHG-YYYYMMDD-XXX)
 ```
@@ -100,6 +106,8 @@ entry_template: |
 	- Expected Effect:
 	- Validation Window:
 	- Observed Result:
+	- Files Touched:
+	- Session Evidence:
 	- Decision: keep | revise | rollback
 	- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX)
 ```

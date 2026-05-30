@@ -15,14 +15,18 @@ Purpose: Reduce logging overhead for small tasks while retaining auditability fo
 Levels:
 
 - `minimal`: used for direct/simple responses — no behavior wiki appends or skill-usage records
-- `compact`: single-agent cycles — one-line behavior checkpoint plus a `Skill-Usage-Log.md` entry derived from prompt/output parsing
-- `full`: multi-agent cycles, failures, or policy changes — full behavior, skill-usage, and context logs plus transcript artifacts with parsed skills
+- `compact`: completed user-visible single-agent cycles — one concise behavior checkpoint plus a `Skill-Usage-Log.md` entry derived from prompt/output parsing
+- `full`: curated multi-agent cycles, failures, or policy changes — full behavior, skill-usage, and context logs plus transcript artifacts with parsed skills
 
 Rules:
 
 - Default mapping: direct -> `minimal`, single-agent -> `compact`, multi-agent/failure -> `full`.
 - On any persistent mode change or tier override, always use `full` for the cycle that caused the change.
 - Keep behavior log entries compact; prefer checklist-style bullets and links to artifacts.
+- Persist at most one curated checkpoint per user-visible orchestration cycle; do not append a new curated entry for every tool call or interim progress update.
+- Automatic hook events must not emit curated six-file updates unless structured metadata explicitly marks the cycle as curated (for example `curated_log=true` or `persist_full_log=true`).
+- Automatic `PostToolUse` hook payloads are telemetry inputs, not curated wiki summaries. Skip them unless the caller supplies meaningful structured metadata or an explicit prompt command.
+- When a cycle is upgraded to `full` by failure or multi-agent routing but lacks meaningful curated metadata, downgrade persistence to compact behavior/skill logging instead of inventing placeholder summaries.
 - Skill usage is recorded by parsing Copilot Chat input/output and explicit runtime invocation hints. The external `%USERPROFILE%\.copilot\skills` folder is read-only metadata, not the source of truth for runtime logging.
 - Persisted logging: compact and full cycles write `Behavior-Log.md` plus `Skill-Usage-Log.md` entries to `.wiki/orchestrator/`; full cycles additionally write transcripts, attachments, screenshots, and policy-change records.
 

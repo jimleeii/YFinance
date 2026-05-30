@@ -1,0 +1,75 @@
+{
+  "claude-haiku-4.5": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": null,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state"
+    ],
+    "observed_in_copilot_chat": true
+  },
+  "claude-sonnet-4.6": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 50,
+    "cost_score": 50,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "orchestrator-telemetry",
+    "cost_score_source": "orchestrator-telemetry",
+    "context_window": null,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "orchestrator-telemetry"
+    ],
+    "observed_in_copilot_chat": true,
+    "quality_sample_count": 0,
+    "latency_sample_count": 2,
+    "cost_sample_count": 2,
+    "sample_count": 2,
+    "raw_latency_ms": 404.5,
+    "raw_cost_units": 50.95,
+    "tool_call_success_rate": 1.0,
+    "tool_call_reliability": "pass"
+  },
+  "gpt-4.1": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": null,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state"
+    ],
+    "observed_in_copilot_chat": true
+  },
+  "gpt-4o": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": null,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state"
+    ],
+    "observed_in_copilot_chat": true
+  }
+}
