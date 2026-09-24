@@ -71,6 +71,86 @@ public sealed class NativeCliContractTests
         Assert.Contains("--symbol", error.GetProperty("message").GetString() ?? string.Empty);
     }
 
+    [Fact]
+    public async Task TopTrendingStocks_MissingCount_ReturnsValidationErrorJson_WithExitCode2()
+    {
+        var result = await NativeCliProcess.RunAsync("top-trending-stocks");
+
+        Assert.Equal(2, result.ExitCode);
+        using var json = ParseJson(result.StdOut);
+
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("ok").GetBoolean());
+
+        var error = root.GetProperty("error");
+        Assert.Equal("validation_error", error.GetProperty("code").GetString());
+        Assert.Contains("--count", error.GetProperty("message").GetString() ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task TopGainers_MissingCount_ReturnsValidationErrorJson_WithExitCode2()
+    {
+        var result = await NativeCliProcess.RunAsync("top-gainers");
+
+        Assert.Equal(2, result.ExitCode);
+        using var json = ParseJson(result.StdOut);
+
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("ok").GetBoolean());
+
+        var error = root.GetProperty("error");
+        Assert.Equal("validation_error", error.GetProperty("code").GetString());
+        Assert.Contains("--count", error.GetProperty("message").GetString() ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task AnalystStrongBuyStocks_InvalidCount_ReturnsValidationErrorJson_WithExitCode2()
+    {
+        var result = await NativeCliProcess.RunAsync("analyst-strong-buy-stocks", "--count", "0");
+
+        Assert.Equal(2, result.ExitCode);
+        using var json = ParseJson(result.StdOut);
+
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("ok").GetBoolean());
+
+        var error = root.GetProperty("error");
+        Assert.Equal("validation_error", error.GetProperty("code").GetString());
+        Assert.Contains("--count", error.GetProperty("message").GetString() ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task ChartInfo_InvalidRangeAlias_ReturnsValidationErrorJson_WithExitCode2()
+    {
+        var result = await NativeCliProcess.RunAsync("chart-info", "--symbol", "AAPL", "--range", "not-a-range");
+
+        Assert.Equal(2, result.ExitCode);
+        using var json = ParseJson(result.StdOut);
+
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("ok").GetBoolean());
+
+        var error = root.GetProperty("error");
+        Assert.Equal("validation_error", error.GetProperty("code").GetString());
+        Assert.Contains("--range", error.GetProperty("message").GetString() ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task TopTrendingStocks_InvalidCountryAlias_ReturnsValidationErrorJson_WithExitCode2()
+    {
+        var result = await NativeCliProcess.RunAsync("top-trending-stocks", "--country", "not-a-country", "--count", "5");
+
+        Assert.Equal(2, result.ExitCode);
+        using var json = ParseJson(result.StdOut);
+
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("ok").GetBoolean());
+
+        var error = root.GetProperty("error");
+        Assert.Equal("validation_error", error.GetProperty("code").GetString());
+        Assert.Contains("--country", error.GetProperty("message").GetString() ?? string.Empty);
+    }
+
     private static JsonDocument ParseJson(string text)
     {
         Assert.False(string.IsNullOrWhiteSpace(text));
