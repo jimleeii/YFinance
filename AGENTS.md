@@ -116,4 +116,12 @@ Local Copilot skills discovery: Agents can reference locally installed Copilot s
 > - [Comment](.github/agents/Orchestrator/skills/comment-policy/SKILL.md)
 > - [Model](.github/agents/Orchestrator/skills/model-policy/SKILL.md)
 
+### Orchestrator executable
+
+When invoking the Orchestrator from this workspace, use the packaged executable below as the runtime entry point:
+
+`C:\Users\wei_li.EDDYFINDT\AppData\Local\orchestrator\orchestrator.exe`
+
+Do not invoke the Orchestrator's Python scripts directly. Select the appropriate executable subcommand (`request`, `dispatch`, `prepare-dispatch`, `validate`, `health`, or `log`) for the operation, and report a failure if the executable exits unsuccessfully.
+
 <!-- End AGENTS.md -->
