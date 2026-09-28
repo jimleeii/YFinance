@@ -18,7 +18,7 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
       - name: Test
-        run: dotnet test --no-build --verbosity normal
+        run: dotnet test --no-restore --configuration Release --verbosity normal
       - name: Pack CLI
         run: dotnet pack src/YFinance.Cli/YFinance.Cli.csproj -c Release -o ./artifacts
       - name: Upload CLI package

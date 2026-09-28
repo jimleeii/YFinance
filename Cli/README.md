@@ -35,6 +35,14 @@ It does **not** call the MCP server and does **not** proxy through `src/` endpoi
 
 `--range` aliases: `1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max`.
 `--interval` aliases: `1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1w, 1mo, 3mo`.
+
+For `chart-info`, the existing provider response is returned unchanged and the additive
+`normalizedData` contract now requires an aligned `completedList` for every candle row.
+Completion is computed authoritatively from explicit UTC timestamps and interval duration:
+`completed = (timestampUtc + intervalDuration) <= nowUtc`. The active in-progress candle is
+therefore `false` by contract. If the provider response is missing arrays, has mismatched lengths,
+or contains timestamps without explicit timezone metadata, the command fails fast as
+`runtime_error` rather than omitting or inferring completion.
 `--country` aliases: `us, uk, au, ca, fr, de, hk, in, it, es`, or the full `Country` enum name case-insensitively (e.g. `UnitedStates`).
 
 ### Stats-module commands
