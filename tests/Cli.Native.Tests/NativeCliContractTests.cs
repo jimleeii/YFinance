@@ -263,10 +263,13 @@ public sealed class NativeCliContractTests
     }
 
     /// <summary>
-    /// Verifies normalized chart-info data rejects non-UTC timestamps so the explicit UTC contract stays intact.
+    /// Verifies normalized chart-info data rejects local timestamps but safely treats provider epoch timestamps as UTC.
     /// </summary>
-    [Fact]
-    public void BuildNormalizedChartInfoData_RejectsNonUtcDateKindsForExplicitUtcContract()
+    [Theory]
+    [InlineData("5m", true)]
+    [InlineData("15m", false)]
+    [InlineData("1h", false)]
+    public void BuildNormalizedChartInfoData_RejectsLocalDateKindsAndNormalizesUnspecifiedDateKindsAsUtc(string intervalAlias, bool expectedCompleted)
     {
         var method = LoadCliAssembly()
             .GetType("QuoteCommands", throwOnError: true)!
@@ -296,8 +299,13 @@ public sealed class NativeCliContractTests
         var localInner = Assert.IsType<InvalidOperationException>(localException.InnerException);
         Assert.Contains("explicit UTC contract", localInner.Message, StringComparison.OrdinalIgnoreCase);
 
-        var unspecifiedException = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [unspecifiedChartInfo, "5m", new Func<DateTimeOffset>(() => DateTimeOffset.UtcNow)]));
-        Assert.IsType<InvalidOperationException>(unspecifiedException.InnerException);
+        var now = new DateTimeOffset(2026, 9, 24, 14, 10, 0, TimeSpan.Zero);
+        var normalized = method.Invoke(null, [unspecifiedChartInfo, intervalAlias, new Func<DateTimeOffset>(() => now)]);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(normalized));
+        var root = json.RootElement;
+
+        Assert.Equal("2026-09-24T14:00:00.0000000Z", root.GetProperty("dateList")[0].GetString());
+        Assert.Equal(expectedCompleted, root.GetProperty("completedList")[0].GetBoolean());
     }
 
     /// <summary>

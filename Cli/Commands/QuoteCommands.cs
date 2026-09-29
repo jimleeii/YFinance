@@ -374,14 +374,14 @@ internal static class QuoteCommands
         };
     }
 
-    // Refuses to infer timezone offsets for timestamps that do not carry explicit DateTime kind metadata.
+    // Treats provider epoch timestamps without kind metadata as UTC while refusing local timestamps.
     private static DateTimeOffset ToExplicitUtcStart(DateTime value)
     {
         return value.Kind switch
         {
             DateTimeKind.Utc => new DateTimeOffset(value, TimeSpan.Zero),
             DateTimeKind.Local => throw new InvalidOperationException("The chart-info response contains local timestamps; the explicit UTC contract requires provider-supplied offsets."),
-            DateTimeKind.Unspecified => throw new InvalidOperationException("The chart-info response contains timestamps without explicit timezone metadata."),
+            DateTimeKind.Unspecified => new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)),
             _ => throw new InvalidOperationException("The chart-info response contains timestamps with an unsupported DateTime kind.")
         };
     }

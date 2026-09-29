@@ -41,8 +41,9 @@ For `chart-info`, the existing provider response is returned unchanged and the a
 Completion is computed authoritatively from explicit UTC timestamps and interval duration:
 `completed = (timestampUtc + intervalDuration) <= nowUtc`. The active in-progress candle is
 therefore `false` by contract. If the provider response is missing arrays, has mismatched lengths,
-or contains timestamps without explicit timezone metadata, the command fails fast as
-`runtime_error` rather than omitting or inferring completion.
+or contains local timestamps, the command fails fast as `runtime_error` rather than omitting
+or inferring completion. Provider timestamps without `DateTimeKind` metadata are interpreted
+as UTC without converting their wall-clock fields through the machine's local timezone.
 `--country` aliases: `us, uk, au, ca, fr, de, hk, in, it, es`, or the full `Country` enum name case-insensitively (e.g. `UnitedStates`).
 
 ### Stats-module commands

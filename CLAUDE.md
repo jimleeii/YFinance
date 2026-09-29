@@ -105,16 +105,16 @@ Local Copilot skills discovery: Agents can reference locally installed Copilot s
 > [!NOTE]
 > This section is only relevant when the Orchestrator is active. The prompts inputted by the user will be optimized for the Orchestrator. The Orchestrator should ALWAYS dispatch to subagents for task execution. It provides the following additional features:
 >
-> - [Call helper scripts for persistence](.github/agents/Orchestrator/skills/workflow-policy/SKILL.md)
-> - [Logging](.github/agents/Orchestrator/skills/logging-policy/SKILL.md)
-> - [Lightweight validation](.github/agents/Orchestrator/skills/quality-policy/SKILL.md)
+> - [Call helper scripts for persistence](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/workflow-policy/SKILL.md)
+> - [Logging](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/logging-policy/SKILL.md)
+> - [Lightweight validation](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/quality-policy/SKILL.md)
 >
 > When an agent is run, the Orchestrator will:
 >
-> - [Logging](.github/agents/Orchestrator/skills/logging-policy/SKILL.md)
-> - [Contract](.github/agents/Orchestrator/skills/contract-validator/SKILL.md)
-> - [Comment](.github/agents/Orchestrator/skills/comment-policy/SKILL.md)
-> - [Model](.github/agents/Orchestrator/skills/model-policy/SKILL.md)
+> - [Logging](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/logging-policy/SKILL.md)
+> - [Contract](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/contract-validator/SKILL.md)
+> - [Comment](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/comment-policy/SKILL.md)
+> - [Model](C:/Users/wei_li.EDDYFINDT/.github/agents/Orchestrator/skills/model-policy/SKILL.md)
 
 ### Orchestrator executable
 
